@@ -8,12 +8,12 @@ headers={
  "x-api-key":"sk_track2_987654321"
 }
 
-with open("sample.jpeg","rb") as f:
+with open("sample3.jpg","rb") as f:
     b64=base64.b64encode(f.read()).decode()
 
 payload={
- "fileName":"sample.jpeg",
- "fileType":"jpeg",
+ "fileName":"sample3.jpg",
+ "fileType":"jpg",
  "fileBase64":b64
 }
 r=requests.post(url,headers=headers,json=payload)

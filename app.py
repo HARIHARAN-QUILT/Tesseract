@@ -21,10 +21,13 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# ---------------- CONFIG ---------------- #
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 API_KEY = os.getenv("API_KEY")
 
 client = Groq(api_key=GROQ_API_KEY)
+
 
 # ---------------- AUTH ---------------- #
 
@@ -50,18 +53,32 @@ def require_api_key(f):
 def extract_pdf_text(path):
 
     text = ""
-    pages = convert_from_path(path)
+
+    pages = convert_from_path(
+        path,
+        dpi=200,
+        first_page=1,
+        last_page=3
+    )
 
     for page in pages:
-        text += pytesseract.image_to_string(page)
+
+        text += pytesseract.image_to_string(
+            page,
+            config="--oem 3 --psm 6"
+        )
 
     return text
 
 
 def extract_image_text(path):
 
-    img = Image.open(path)
-    return pytesseract.image_to_string(img)
+    img = Image.open(path).convert("L")
+
+    return pytesseract.image_to_string(
+        img,
+        config="--oem 3 --psm 6"
+    )
 
 
 def extract_docx_text(file_bytes):
@@ -80,7 +97,9 @@ def analyse(text):
     prompt = f"""
 You are a document analysis AI.
 
-Return ONLY JSON in this format:
+Return ONLY JSON.
+
+Format:
 
 {{
  "summary":"",
@@ -94,14 +113,15 @@ Return ONLY JSON in this format:
 }}
 
 Document:
-{text[:4000]}
+
+{text[:2000]}
 """
 
     chat = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
-        max_tokens=1024,
+        max_tokens=300,
     )
 
     raw = chat.choices[0].message.content.strip()
@@ -110,7 +130,19 @@ Document:
         raw = raw.split("```")[1]
         raw = raw.replace("json", "").strip()
 
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except:
+        return {
+            "summary": raw,
+            "entities": {
+                "names": [],
+                "dates": [],
+                "organizations": [],
+                "amounts": []
+            },
+            "sentiment": "Neutral"
+        }
 
 
 # ---------------- ROUTES ---------------- #
@@ -132,19 +164,29 @@ def analyze():
     body = request.get_json(silent=True)
 
     if not body:
-        return jsonify({"status":"error","message":"JSON body required"}),400
+        return jsonify({
+            "status":"error",
+            "message":"JSON body required"
+        }),400
 
     file_name = body.get("fileName","file")
     file_type = body.get("fileType","").lower()
     file_b64  = body.get("fileBase64")
 
     if not file_type or not file_b64:
-        return jsonify({"status":"error","message":"fileType and fileBase64 required"}),400
+        return jsonify({
+            "status":"error",
+            "message":"fileType and fileBase64 required"
+        }),400
+
 
     try:
         file_bytes = base64.b64decode(file_b64)
     except:
-        return jsonify({"status":"error","message":"Invalid base64"}),400
+        return jsonify({
+            "status":"error",
+            "message":"Invalid base64"
+        }),400
 
 
     text = ""
@@ -155,6 +197,7 @@ def analyze():
 
             text = extract_docx_text(file_bytes)
 
+
         elif file_type == "pdf":
 
             path = f"/tmp/{uuid.uuid4()}.pdf"
@@ -164,7 +207,10 @@ def analyze():
 
             text = extract_pdf_text(path)
 
-        elif file_type in ["png","jpg","jpeg","image"]:
+            os.remove(path)
+
+
+        elif file_type in ["png","jpg","jpeg"]:
 
             path = f"/tmp/{uuid.uuid4()}.png"
 
@@ -173,12 +219,16 @@ def analyze():
 
             text = extract_image_text(path)
 
+            os.remove(path)
+
+
         else:
 
             return jsonify({
                 "status":"error",
                 "message":"Unsupported fileType"
             }),400
+
 
     except Exception as e:
 
@@ -223,6 +273,8 @@ def analyze():
 
     })
 
+
+# ---------------- RUN ---------------- #
 
 if __name__ == "__main__":
 
